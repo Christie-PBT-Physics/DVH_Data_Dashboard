@@ -1,6 +1,8 @@
 import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
+import plotly.express as px
+import plotly.graph_objects as go
 import streamlit as st
 import os
 import re
@@ -46,28 +48,6 @@ def read_csv(location):
     df = pd.DataFrame(arr, columns=('Patient', 'OAR', 'Max', 'Mean' ,'Median' , 'Min', 'Volume'))
     number = len(df['Patient'].unique())
     return df, number
-                
-
-def plot_violins(all, patient, metric):
-    plot = plt.figure()
-    sns.violinplot(data=all,
-                    y='OAR',
-                    x=metric,
-                    cut=0,
-                    bw_adjust=.5,
-                    palette='gnuplot',
-                    linewidth=0,
-                    inner="stick",
-                    hue='OAR',
-                    legend=False,
-                    inner_kws=dict(linewidth=.8, color=".8"))
-    sns.stripplot(data=patient, y='OAR', x=metric, color='red')
-
-    plt.xticks(rotation=90)
-    plt.tight_layout()
-    #plt.savefig("Violins.png")
-    plt.grid('x', linestyle=':', linewidth=.5)
-    return plot
 
 
 def plot_single_violin(all, patient, metric, oar):
@@ -87,11 +67,31 @@ def plot_single_violin(all, patient, metric, oar):
     plt.xlabel('')
     plt.xticks(fontsize=8)
     plt.box(False)
-    #plt.xticks(rotation=90)
     plt.tight_layout()
-    #plt.savefig("Violins.png")
     plt.grid(True, linestyle=':', linewidth=.5)
     return plot
+
+
+def plot_single_violin_plotly(all, patient, metric, oar):
+    specific_oar_df = all[all['OAR']==oar]
+    violin = go.Violin(x=specific_oar_df[metric],
+                        points='all',
+                        jitter=1,
+                        pointpos=0,
+                        marker=dict(size=8, symbol="x-thin-open"),
+                        spanmode='hard',
+                        name='violin')
+    scatter = go.Scatter(x=patient[patient['OAR']==oar][metric],
+                            y=['violin'],
+                            marker=dict(color='red'))
+    fig = go.Figure(data=[violin,scatter])
+    
+    fig.update_layout(yaxis=dict(visible=False),
+                        xaxis=dict(showgrid=True),
+                        margin=dict(l=20, r=20, t=20, b=20),
+                        height=150,
+                        showlegend=False)
+    return fig
     
 
 if __name__ == '__main__':
@@ -99,7 +99,7 @@ if __name__ == '__main__':
     st.set_page_config(page_title='Dose Dashboard', layout='wide')
     st.title('Patient Dose Dashboard')
 
-    directory = '../Mined_Data'
+    directory = '../../Mined_Data'
     dose_metrics = ['Mean' ,'Median', 'Max', 'Min']
 
     summary_metrics, number_of_patients = read_csv(directory)
@@ -131,7 +131,10 @@ if __name__ == '__main__':
                 st.markdown(f'## {oar}')
             with column1_2:
                 selected_metric = st.selectbox(label='Please select dose metric', options=dose_metrics, key=oar)
-            st.pyplot(plot_single_violin(summary_metrics,specific_patient_df, selected_metric, oar))
+            st.plotly_chart(plot_single_violin_plotly(summary_metrics, specific_patient_df, selected_metric, oar),
+                            config={'displayModeBar': False})
+            #st.pyplot(plot_single_violin(summary_metrics, specific_patient_df, selected_metric, oar))
+
 
         # with column2:
         #     with st.expander('NTCP Models'):
