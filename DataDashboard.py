@@ -232,26 +232,27 @@ if __name__ == '__main__':
             button1_loc, button2_loc, button3_loc = st.columns([1,1,1])
             specific_patient_df = summary_metrics[(summary_metrics['Patient'] == selected_patient)]
             oar_list = specific_patient_df['OAR'].unique().tolist()
-            oar_selection = pd.DataFrame({"OAR": oar_list,"Display": [True]*len(oar_list),})
+            if st.session_state.oar_selection.empty:
+                st.session_state.oar_selection = pd.DataFrame({"OAR": oar_list,"Display": [True]*len(oar_list),})
             with button1_loc:
                 if st.button('All', width='stretch'):
-                    oar_selection['Display'].values[:] = True
+                    st.session_state.oar_selection['Display'].values[:] = True
             with button2_loc:
                 if st.button('Planning', width='stretch'):
-                    for name, val in oar_selection.values:
+                    for name, val in st.session_state.oar_selection.values:
                         if (name in treatment_planning_contours):
-                            oar_selection.loc[oar_selection['OAR']==name, 'Display'] = True
+                            st.session_state.oar_selection.loc[st.session_state.oar_selection['OAR']==name, 'Display'] = True
                         else:
-                            oar_selection.loc[oar_selection['OAR']==name, 'Display'] = False
+                            st.session_state.oar_selection.loc[st.session_state.oar_selection['OAR']==name, 'Display'] = False
             with button3_loc:
                 if st.button('OARs', width='stretch'):
-                    for name, val in oar_selection.values:
+                    for name, val in st.session_state.oar_selection.values:
                         if (name not in treatment_planning_contours):
-                            oar_selection.loc[oar_selection['OAR']==name, 'Display'] = True
+                            st.session_state.oar_selection.loc[st.session_state.oar_selection['OAR']==name, 'Display'] = True
                         else:
-                            oar_selection.loc[oar_selection['OAR']==name, 'Display'] = False
+                            st.session_state.oar_selection.loc[st.session_state.oar_selection['OAR']==name, 'Display'] = False
 
-            updated_selection = st.data_editor(oar_selection,
+            updated_selection = st.data_editor(st.session_state.oar_selection,
                                                 column_config={"Display": st.column_config.CheckboxColumn("Display?")},
                                                 hide_index=True)
         oar_list = updated_selection['OAR'][updated_selection['Display'] == True]
@@ -269,7 +270,8 @@ if __name__ == '__main__':
             with column1_2:
                 selected_metric = st.selectbox(label='Please select dose metric', options=dose_metrics, key=oar)
             st.plotly_chart(plot_single_violin_plotly(summary_metrics, specific_patient_df, selected_patient, selected_metric, oar),
-                            config={'displayModeBar': False})
+                            config={'modeBarButtonsToAdd':['select2d','lasso2d'],
+                                    'modeBarButtonsToRemove': ['zoom', 'pan',  'zoomIn', 'zoomOut']})
             #st.plotly_chart(swarm(summary_metrics[summary_metrics['OAR']==oar][selected_metric], 'test'))
             #st.pyplot(plot_single_violin(summary_metrics, specific_patient_df, selected_metric, oar))
 
