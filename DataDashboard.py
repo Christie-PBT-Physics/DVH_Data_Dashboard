@@ -73,7 +73,7 @@ def plot_single_violin(all, patient, metric, oar):
     return plot
 
 
-def plot_single_violin_plotly(all_data, patient, metric, oar):
+def plot_single_violin_plotly(all_data, patient, patient_id, metric, oar):
     specific_oar_df = all_data[all_data['OAR']==oar]
     violin = go.Violin(x=specific_oar_df[metric],
                         points=False,
@@ -88,13 +88,25 @@ def plot_single_violin_plotly(all_data, patient, metric, oar):
     scatter = go.Scatter(x=patient[patient['OAR']==oar][metric],
                             y=['violin'],
                             marker=dict(color='#a50026'),
+                            text=str(patient_id),
+                            hovertemplate=
+                            '<b>PID</b>: ' + patient_id + '<br>' +
+                            '<b>Dose (Gy)</b>: %{x}',
+                            hoverlabel = dict(font=dict(color='#a50026')),
+                            name='Selected Patient',
                             zorder=3)
-    points_df = swarm_df(all_data[all_data['OAR']==oar][metric])
+    points_df = swarm_df(all_data[all_data['OAR']==oar][['Patient', metric]], metric)
+    print(points_df)
     points = go.Scatter(x=points_df['x'],
                             y=points_df['y'],
                             marker=dict(color='#abd9e9', symbol='circle-open'),
                             mode='markers',
                             yaxis='y2',
+                            text=points_df['patient'],
+                            hovertemplate=
+                            '<b>PID</b>: %{text}<br>' +
+                            '<b>Dose (Gy)</b>: %{x}',
+                            name='All Patients',
                             zorder=1)
 
     fig = go.Figure(data=[scatter,points,violin])
@@ -227,6 +239,7 @@ def swarm(
 
 def swarm_df(
     X_series,
+    metric,
     point_size=0.5,
     fig_width=800,
     gap_multiplier=1.1,
@@ -236,20 +249,20 @@ def swarm_df(
     # columns that vary unpredictably in the x-dimension.
     # We also exploit the fact that sorting means we see bins sequentially when
     # we add collision prevention offsets.
-    X_series = X_series.copy().sort_values()
+    X_series = X_series.copy().sort_values(by=metric)
 
     # we need to reason in terms of the marker size that is measured in px
     # so we need to think about each x-coordinate as being a fraction of the way from the
     # minimum X value to the maximum X value
-    min_x = min(X_series)
-    max_x = max(X_series)
+    min_x = min(X_series[metric])
+    max_x = max(X_series[metric])
 
     list_of_rows = []
     # we will count the number of points in each "bin" / vertical strip of the graph
     # to be able to assign a y-coordinate that avoids overlapping
     bin_counter = collections.Counter()
 
-    for x_val in X_series:
+    for pid, x_val in X_series.values:
         # assign this x_value to bin number
         # each bin is a vertical strip slightly narrower than one marker
         bin = (((fig_width*bin_fraction*(x_val-min_x))/(max_x-min_x)) // point_size)
@@ -259,7 +272,7 @@ def swarm_df(
 
         # remember the "y-slot" which tells us the number of points in this bin and is sufficient to compute the y coordinate unless there's a collision with the point to its left
         list_of_rows.append(
-            {"x": x_val, "y_slot": bin_counter[bin], "bin": bin})
+            {"x": x_val, "y_slot": bin_counter[bin], "bin": bin, 'patient': pid})
 
     # iterate through the points and "offset" any that are colliding with a
     # point to their left apply the offsets to all subsequent points in the same bin.
@@ -342,7 +355,7 @@ if __name__ == '__main__':
                 st.markdown(f'## {oar}')
             with column1_2:
                 selected_metric = st.selectbox(label='Please select dose metric', options=dose_metrics, key=oar)
-            st.plotly_chart(plot_single_violin_plotly(summary_metrics, specific_patient_df, selected_metric, oar),
+            st.plotly_chart(plot_single_violin_plotly(summary_metrics, specific_patient_df, selected_patient, selected_metric, oar),
                             config={'displayModeBar': False})
             #st.plotly_chart(swarm(summary_metrics[summary_metrics['OAR']==oar][selected_metric], 'test'))
             #st.pyplot(plot_single_violin(summary_metrics, specific_patient_df, selected_metric, oar))
