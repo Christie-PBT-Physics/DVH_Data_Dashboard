@@ -210,6 +210,10 @@ def swarm_df(
 # @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 
 
+def set_new_patient(value):
+    st.session_state.new_patient = value
+
+
 if __name__ == '__main__':
 
     st.set_page_config(page_title='Dose Dashboard', layout='wide')
@@ -224,16 +228,19 @@ if __name__ == '__main__':
         summary_metrics[metric] /= 100
 
     with st.sidebar:
-
         st.markdown(f'# Patient')
-        selected_patient = st.selectbox(label=f'Please select patient to display ({number_of_patients})', options=summary_metrics['Patient'].unique())
+        selected_patient = st.selectbox(label=f'Please select patient to display ({number_of_patients})',
+                                        options=summary_metrics['Patient'].unique(),
+                                        on_change=set_new_patient,args=(True,))
         with st.expander('Patient Contours Selection'):
             treatment_planning_contours = ['CTV_High', 'PTV_High']
             button1_loc, button2_loc, button3_loc = st.columns([1,1,1])
             specific_patient_df = summary_metrics[(summary_metrics['Patient'] == selected_patient)]
             oar_list = specific_patient_df['OAR'].unique().tolist()
-            if st.session_state.oar_selection.empty:
+
+            if st.session_state.oar_selection.empty or st.session_state.new_patient:
                 st.session_state.oar_selection = pd.DataFrame({"OAR": oar_list,"Display": [True]*len(oar_list),})
+                st.session_state.new_patient = False
             with button1_loc:
                 if st.button('All', width='stretch'):
                     st.session_state.oar_selection['Display'].values[:] = True
@@ -258,6 +265,7 @@ if __name__ == '__main__':
         oar_list = updated_selection['OAR'][updated_selection['Display'] == True]
         st.markdown(f'# Population')
         age_range = st.slider("Pupulation age range", 0, 130, (0,130))
+        st.markdown(f'# Models')
 
     summary_metrics = summary_metrics[summary_metrics['OAR'].isin(oar_list)]
     
@@ -271,7 +279,7 @@ if __name__ == '__main__':
                 selected_metric = st.selectbox(label='Please select dose metric', options=dose_metrics, key=oar)
             st.plotly_chart(plot_single_violin_plotly(summary_metrics, specific_patient_df, selected_patient, selected_metric, oar),
                             config={'modeBarButtonsToAdd':['select2d','lasso2d'],
-                                    'modeBarButtonsToRemove': ['zoom', 'pan',  'zoomIn', 'zoomOut']})
+                                    'modeBarButtonsToRemove': ['pan',  'zoomIn', 'zoomOut']})
             #st.plotly_chart(swarm(summary_metrics[summary_metrics['OAR']==oar][selected_metric], 'test'))
             #st.pyplot(plot_single_violin(summary_metrics, specific_patient_df, selected_metric, oar))
 
