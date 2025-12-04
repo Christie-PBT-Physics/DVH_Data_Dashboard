@@ -1,6 +1,7 @@
 import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
+from streamlit_plotly_events import plotly_events
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
@@ -16,46 +17,47 @@ def read_database(location):
     return df
 
 
-# @st.cache_data
-# def read_csv(location):
-#     arr = []
-#     for file in os.listdir(location):
-#         match = re.search(r'(\d*)_All_DVH_Data.csv',file)
-#         if (match):
-#             PID = match[1]
-#             full_path = os.path.join(location, file)
-#             try:
-#                 with open(full_path, 'r') as file:
-#                     organ_at_risk = ''
-#                     max_dose = 0
-#                     mean_dose = 0
-#                     meadian_dose = 0
-#                     min_dose = 99999
-#                     organ_volume = 0
-#                     found_oar = False
-#                     found_metrics = False
-#                     for line in file:
-#                         if not found_oar:
-#                             if len(line.split(r',')) == 1:
-#                                 organ_at_risk = line.strip('\n')
-#                                 found_oar = True
-#                         else:
-#                             if not found_metrics:
-#                                 if line == 'Max,Mean,Median,Min,Volume\n':
-#                                     found_metrics = True
-#                             else:
-#                                 data_row = line.split(',')
-#                                 data_row = [float(value.strip(' cGy')) for value in data_row]
-#                                 max_dose, mean_dose, meadian_dose, min_dose, organ_volume = data_row
-#                                 found_oar = False
-#                                 found_metrics = False
-#                                 arr.append([PID, organ_at_risk, max_dose, mean_dose, meadian_dose, min_dose, organ_volume])
-#             except:
-#                 print(f'Could not find {path}')
-                    
-#     df = pd.DataFrame(arr, columns=('Patient', 'OAR', 'Max', 'Mean' ,'Median' , 'Min', 'Volume'))
-#     number = len(df['Patient'].unique())
-#     return df, number
+@st.cache_data
+def get_list_of_metrics_for_contours(location):
+    path = os.path.join(location, 'structures_and_metrics.csv')
+    df = pd.read_csv(path)
+    already_captured = ['max', 'mean', 'median', 'min', 'structurevol']
+    df.drop(df[df.Metric.isin(already_captured)].index, inplace=True)
+    df['Combined_Metric'] = df.apply(lambda row:f'{row['Metric']}~{row['Value']}', axis=1)
+    metrics_for_contours_dict = dict((name,df[df['Structure_Names']==name]['Combined_Metric'].tolist()) for name in df['Structure_Names'].unique().tolist())
+
+    translate_to_human = dict((name,translate(name)) for name in df['Combined_Metric'].unique().tolist() + ['Mean' ,'Median', 'Max', 'Min'])
+    translate_from_human = dict((translate(name),name) for name in df['Combined_Metric'].unique().tolist() + ['Mean' ,'Median', 'Max', 'Min'])
+
+    return metrics_for_contours_dict, translate_to_human, translate_from_human
+
+
+def translate(full_name):
+    match full_name:
+        case 'Max':
+            return 'Max (cGy)'
+        case 'Mean':
+            return 'Mean (cGy)'
+        case 'Median':
+            return 'Median (cGy)'
+        case 'Min':
+            return 'Min (cGy)'
+
+    first = full_name.split('_')[0]
+    rest = full_name.split('_')[1]
+    second = rest.split('~')[0]
+    value = rest.split('~')[1]
+    if first == 'dose':
+        if second == 'cc':
+            formatted_name = f'D{value} cm\u00b3 (cGy)'
+        else:
+            formatted_name = f'D{value} % (cGy)'
+    elif first == 'absolute':
+        formatted_name = f'V{value} cGy (cm\u00b3)'
+    elif first == 'relative':
+        formatted_name = f'V{value} cGy (%)'
+
+    return formatted_name
 
 
 def plot_single_violin(all, patient, metric, oar):
@@ -88,16 +90,16 @@ def plot_single_violin_plotly(all_data, patient, patient_id, metric, oar):
                         # pointpos=0,
                         marker=dict(color='#4575b4'),
                         spanmode='hard',
-                        bandwidth=1,
+                        bandwidth=50,
                         name='violin',
                         hoverinfo='none',
                         zorder=2)
     scatter = go.Scatter(x=patient[patient['OAR']==oar][metric],
                             y=['violin'],
                             marker=dict(color='#a50026'),
-                            text=str(patient_id),
+                            text=patient_id,
                             hovertemplate=
-                            '<b>PID</b>: {text} <br>' +
+                            '<b>PID</b>: '+ str(patient_id) + '<br>' +
                             '<b>Dose (Gy)</b>: %{x}',
                             hoverlabel = dict(font=dict(color='#a50026')),
                             name='Selected Patient',
@@ -115,8 +117,21 @@ def plot_single_violin_plotly(all_data, patient, patient_id, metric, oar):
                             '<b>Dose (Gy)</b>: %{x}',
                             name='All Patients',
                             zorder=1)
-
-    fig = go.Figure(data=[scatter,points,violin])
+    
+    highlight_df = swarm_df(all_data[(all_data['OAR']==oar)][['Patient', metric]], metric)
+    highlight_df = highlight_df[highlight_df['patient'].isin(st.session_state.selected_patient_ids)]
+    highlight = go.Scatter(x=highlight_df['x'],
+                            y=highlight_df['y'],
+                            marker=dict(color='#f46d43', symbol='circle'),
+                            mode='markers',
+                            yaxis='y2',
+                            text=highlight_df['patient'],
+                            hovertemplate=
+                            '<b>PID</b>: %{text}<br>' +
+                            '<b>Dose (Gy)</b>: %{x}',
+                            name='Highlighted Patients',
+                            zorder=4)
+    fig = go.Figure(data=[highlight,scatter,points,violin])
     
     fig.update_layout(yaxis=dict(visible=False),
                         yaxis2=dict(visible=False, overlaying='y', side='right'),
@@ -222,18 +237,36 @@ def set_new_patient(value):
     st.session_state.new_patient = value
 
 
+def store_selected_ids(selection):
+    # if len(st.session_state.selected_patient_ids) == 0:
+    # if len(selection['selection']['points']) != 0:
+    # if selected_patients['selection']['points'][0]['curve_number'] == 0:
+    #     selected_patients['selection']['points'].pop(0)
+    # patient_ids = [x['text'] for x in selected_patients['selection']['points']]
+    # st.session_state.selected_patient_ids = patient_ids
+    patient_ids = []
+    for point in selected_patients['selection']['points']:
+        if point['y'] != 'violin':
+            patient_ids.append(point['text'])
+    if st.session_state.selected_patient_ids != patient_ids:
+        st.session_state.selected_patient_ids = patient_ids
+        st.rerun()
+
+
 if __name__ == '__main__':
 
     st.set_page_config(page_title='Dose Dashboard', layout='wide')
     st.title('Patient Dose Dashboard')
 
+    # Initiate new session states
+    if 'new_patient' not in st.session_state:
+        st.session_state['new_patient'] = True
+    if 'selected_patient_ids' not in st.session_state:
+        st.session_state['selected_patient_ids'] = []
+
     directory = './'  #'../../Mined_Data'
-    dose_metrics = ['Mean' ,'Median', 'Max', 'Min']
-
     summary_metrics = read_database(directory)
-
-    for metric in dose_metrics:
-        summary_metrics[metric] /= 100
+    contour_metrics_dict, tth, tfh = get_list_of_metrics_for_contours(directory)
 
     number_of_patients = len(summary_metrics['Patient'].unique())
 
@@ -274,24 +307,35 @@ if __name__ == '__main__':
                                                 hide_index=True)
         oar_list = updated_selection['OAR'][updated_selection['Display'] == True]
         st.markdown(f'# Population')
-        age_range = st.slider("Pupulation age range", 0, 130, (0,130))
+        if st.button('Clear Selection'):
+            st.session_state.selected_patient_ids = []
+        with st.expander('WIP'):
+            age_range = st.slider("Pupulation age range", 0, 130, (0,130))
         st.markdown(f'# Models')
+        with st.expander('WIP'):
+            st.write('Some selection for which NTCP models to display')
 
     summary_metrics = summary_metrics[summary_metrics['OAR'].isin(oar_list)]
     
     for oar in oar_list:
+        try:
+            contour_specific_dose_metrics = contour_metrics_dict[oar]
+        except:
+            contour_specific_dose_metrics = []
+        dose_metrics = ['Mean' ,'Median', 'Max', 'Min'] + contour_specific_dose_metrics
+        dose_metrics_to_display = [tth[x] for x in dose_metrics]
         column1, column2 = st.columns([1,1])
         with column1:
-            column1_1, column1_2, column1_3 = st.columns([2,1,1])
+            column1_1, column1_2 = st.columns([2,1])
             with column1_2:
-                selected_metric = st.selectbox(label='Please select dose metric', options=dose_metrics, key=oar)
+                selected_metric = st.selectbox(label='Please select dose metric', options=dose_metrics_to_display, key=oar)
+                selected_metric = tfh[selected_metric]
                 fig, this_contour_patient_number = plot_single_violin_plotly(summary_metrics, specific_patient_df, selected_patient, selected_metric, oar)
             with column1_1:
                 st.markdown(f'## {oar} ({this_contour_patient_number})')
-            
-            st.plotly_chart(fig,
-                            config={'modeBarButtonsToAdd':['select2d','lasso2d'],
-                                    'modeBarButtonsToRemove': ['pan',  'zoomIn', 'zoomOut']})
+            selected_patients = st.plotly_chart(fig, on_select='rerun', config={'modeBarButtonsToAdd':['select2d','lasso2d'],'modeBarButtonsToRemove': ['pan',  'zoomIn', 'zoomOut']})
+            if len(selected_patients['selection']['points']) != 0:
+                store_selected_ids(selected_patients)
             #st.plotly_chart(swarm(summary_metrics[summary_metrics['OAR']==oar][selected_metric], 'test'))
             #st.pyplot(plot_single_violin(summary_metrics, specific_patient_df, selected_metric, oar))
 
