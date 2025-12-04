@@ -84,13 +84,14 @@ def plot_single_violin(all, patient, metric, oar):
 
 def plot_single_violin_plotly(all_data, patient, patient_id, metric, oar):
     specific_oar_df = all_data[all_data['OAR']==oar]
+    max_x_axis = specific_oar_df[metric].max()
     violin = go.Violin(x=specific_oar_df[metric],
                         points=False,
                         # jitter=1,
                         # pointpos=0,
                         marker=dict(color='#4575b4'),
                         spanmode='hard',
-                        bandwidth=50,
+                        bandwidth=max_x_axis/100,
                         name='violin',
                         hoverinfo='none',
                         zorder=2)
@@ -309,13 +310,22 @@ if __name__ == '__main__':
         st.markdown(f'# Population')
         if st.button('Clear Selection'):
             st.session_state.selected_patient_ids = []
+        with st.expander('Prescriptions'):
+            prescription_selection = pd.DataFrame({"Prescription": summary_metrics['Prescription'].unique(), "Display": [True]*len(summary_metrics['Prescription'].unique())})
+            updated_prescription_selection = st.data_editor(prescription_selection,
+                                                            column_config={"Display": st.column_config.CheckboxColumn("Display?")},
+                                                            hide_index=True)
+        prescription_list = updated_prescription_selection['Prescription'][updated_prescription_selection['Display'] == True]
         with st.expander('WIP'):
-            age_range = st.slider("Pupulation age range", 0, 130, (0,130))
+            age_range = st.slider("Pupulation age range DUMMY", 0, 130, (0,130))
+            
         st.markdown(f'# Models')
         with st.expander('WIP'):
             st.write('Some selection for which NTCP models to display')
 
     summary_metrics = summary_metrics[summary_metrics['OAR'].isin(oar_list)]
+
+    summary_metrics = summary_metrics[summary_metrics['Prescription'].isin(prescription_list)]
     
     for oar in oar_list:
         try:
