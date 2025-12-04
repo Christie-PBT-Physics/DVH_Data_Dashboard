@@ -10,45 +10,52 @@ import collections
 
 
 @st.cache_data
-def read_csv(location):
-    arr = []
-    for file in os.listdir(location):
-        match = re.search(r'(\d*)_All_DVH_Data.csv',file)
-        if (match):
-            PID = match[1]
-            full_path = os.path.join(directory, file)
-            try:
-                with open(full_path, 'r') as file:
-                    organ_at_risk = ''
-                    max_dose = 0
-                    mean_dose = 0
-                    meadian_dose = 0
-                    min_dose = 99999
-                    organ_volume = 0
-                    found_oar = False
-                    found_metrics = False
-                    for line in file:
-                        if not found_oar:
-                            if len(line.split(r',')) == 1:
-                                organ_at_risk = line.strip('\n')
-                                found_oar = True
-                        else:
-                            if not found_metrics:
-                                if line == 'Max,Mean,Median,Min,Volume\n':
-                                    found_metrics = True
-                            else:
-                                data_row = line.split(',')
-                                data_row = [float(value.strip(' cGy')) for value in data_row]
-                                max_dose, mean_dose, meadian_dose, min_dose, organ_volume = data_row
-                                found_oar = False
-                                found_metrics = False
-                                arr.append([PID, organ_at_risk, max_dose, mean_dose, meadian_dose, min_dose, organ_volume])
-            except:
-                print(f'Could not find {path}')
+def read_database(location):
+    path = os.path.join(location, 'All_Patients_Summarised.csv')
+    df = pd.read_csv(path)
+    return df
+
+
+# @st.cache_data
+# def read_csv(location):
+#     arr = []
+#     for file in os.listdir(location):
+#         match = re.search(r'(\d*)_All_DVH_Data.csv',file)
+#         if (match):
+#             PID = match[1]
+#             full_path = os.path.join(location, file)
+#             try:
+#                 with open(full_path, 'r') as file:
+#                     organ_at_risk = ''
+#                     max_dose = 0
+#                     mean_dose = 0
+#                     meadian_dose = 0
+#                     min_dose = 99999
+#                     organ_volume = 0
+#                     found_oar = False
+#                     found_metrics = False
+#                     for line in file:
+#                         if not found_oar:
+#                             if len(line.split(r',')) == 1:
+#                                 organ_at_risk = line.strip('\n')
+#                                 found_oar = True
+#                         else:
+#                             if not found_metrics:
+#                                 if line == 'Max,Mean,Median,Min,Volume\n':
+#                                     found_metrics = True
+#                             else:
+#                                 data_row = line.split(',')
+#                                 data_row = [float(value.strip(' cGy')) for value in data_row]
+#                                 max_dose, mean_dose, meadian_dose, min_dose, organ_volume = data_row
+#                                 found_oar = False
+#                                 found_metrics = False
+#                                 arr.append([PID, organ_at_risk, max_dose, mean_dose, meadian_dose, min_dose, organ_volume])
+#             except:
+#                 print(f'Could not find {path}')
                     
-    df = pd.DataFrame(arr, columns=('Patient', 'OAR', 'Max', 'Mean' ,'Median' , 'Min', 'Volume'))
-    number = len(df['Patient'].unique())
-    return df, number
+#     df = pd.DataFrame(arr, columns=('Patient', 'OAR', 'Max', 'Mean' ,'Median' , 'Min', 'Volume'))
+#     number = len(df['Patient'].unique())
+#     return df, number
 
 
 def plot_single_violin(all, patient, metric, oar):
@@ -90,12 +97,13 @@ def plot_single_violin_plotly(all_data, patient, patient_id, metric, oar):
                             marker=dict(color='#a50026'),
                             text=str(patient_id),
                             hovertemplate=
-                            '<b>PID</b>: ' + patient_id + '<br>' +
+                            '<b>PID</b>: {text} <br>' +
                             '<b>Dose (Gy)</b>: %{x}',
                             hoverlabel = dict(font=dict(color='#a50026')),
                             name='Selected Patient',
                             zorder=3)
     points_df = swarm_df(all_data[all_data['OAR']==oar][['Patient', metric]], metric)
+    number_of_patients_for_this_contour = len(points_df)
     points = go.Scatter(x=points_df['x'],
                             y=points_df['y'],
                             marker=dict(color='#abd9e9', symbol='circle-open'),
@@ -116,7 +124,7 @@ def plot_single_violin_plotly(all_data, patient, patient_id, metric, oar):
                         margin=dict(l=20, r=20, t=20, b=20),
                         height=150,
                         showlegend=False)
-    return fig
+    return fig, number_of_patients_for_this_contour
 
 
 # @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
@@ -219,13 +227,15 @@ if __name__ == '__main__':
     st.set_page_config(page_title='Dose Dashboard', layout='wide')
     st.title('Patient Dose Dashboard')
 
-    directory = '../../Mined_Data'
+    directory = './'  #'../../Mined_Data'
     dose_metrics = ['Mean' ,'Median', 'Max', 'Min']
 
-    summary_metrics, number_of_patients = read_csv(directory)
+    summary_metrics = read_database(directory)
 
     for metric in dose_metrics:
         summary_metrics[metric] /= 100
+
+    number_of_patients = len(summary_metrics['Patient'].unique())
 
     with st.sidebar:
         st.markdown(f'# Patient')
@@ -238,7 +248,7 @@ if __name__ == '__main__':
             specific_patient_df = summary_metrics[(summary_metrics['Patient'] == selected_patient)]
             oar_list = specific_patient_df['OAR'].unique().tolist()
 
-            if st.session_state.oar_selection.empty or st.session_state.new_patient:
+            if st.session_state.new_patient:
                 st.session_state.oar_selection = pd.DataFrame({"OAR": oar_list,"Display": [True]*len(oar_list),})
                 st.session_state.new_patient = False
             with button1_loc:
@@ -273,11 +283,13 @@ if __name__ == '__main__':
         column1, column2 = st.columns([1,1])
         with column1:
             column1_1, column1_2, column1_3 = st.columns([2,1,1])
-            with column1_1:
-                st.markdown(f'## {oar}')
             with column1_2:
                 selected_metric = st.selectbox(label='Please select dose metric', options=dose_metrics, key=oar)
-            st.plotly_chart(plot_single_violin_plotly(summary_metrics, specific_patient_df, selected_patient, selected_metric, oar),
+                fig, this_contour_patient_number = plot_single_violin_plotly(summary_metrics, specific_patient_df, selected_patient, selected_metric, oar)
+            with column1_1:
+                st.markdown(f'## {oar} ({this_contour_patient_number})')
+            
+            st.plotly_chart(fig,
                             config={'modeBarButtonsToAdd':['select2d','lasso2d'],
                                     'modeBarButtonsToRemove': ['pan',  'zoomIn', 'zoomOut']})
             #st.plotly_chart(swarm(summary_metrics[summary_metrics['OAR']==oar][selected_metric], 'test'))
