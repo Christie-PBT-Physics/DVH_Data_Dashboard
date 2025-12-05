@@ -1,10 +1,12 @@
 import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
+import numpy as np
 from streamlit_plotly_events import plotly_events
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
+from scipy.integrate import quad
 import os
 import re
 import collections
@@ -30,6 +32,37 @@ def get_list_of_metrics_for_contours(location):
     translate_from_human = dict((translate(name),name) for name in df['Combined_Metric'].unique().tolist() + ['Mean' ,'Median', 'Max', 'Min'])
 
     return metrics_for_contours_dict, translate_to_human, translate_from_human
+
+
+@st.cache_data
+def get_prescription_groups(list_of_prescriptions):
+    dict_to_return ={'Trial':[], 'Wilm':[], 'Ewing':[], 'CNS':[], 'Chordoma':[], 'Sarcoma':[], 'Glioma':[], 'Ependymoma':[], 'Medulloblastoma':[], 'Lymphoma':[], 'Post-op':[], 'Oma':[]}
+    list_of_trials = ['PROTIS', 'TORPEdO', 'PARABLE', 'APPROACH', 'HIT-MESO'] # PNET5? SIOP?
+
+    for prescription_group in dict_to_return.keys():
+        temp_to_delete = []
+        if prescription_group == 'Trial':
+            for i, prescription_name in enumerate(list_of_prescriptions):
+                for trial_name in list_of_trials:
+                    if re.search(trial_name, prescription_name, re.IGNORECASE):
+                        dict_to_return[prescription_group].append(prescription_name)
+                        temp_to_delete.append(i) 
+        else:
+            for i, prescription_name in enumerate(list_of_prescriptions):
+                if re.search(prescription_group, prescription_name, re.IGNORECASE):
+                    dict_to_return[prescription_group].append(prescription_name)
+                    temp_to_delete.append(i)
+        list_of_prescriptions = np.delete(list_of_prescriptions, temp_to_delete)
+
+    dict_to_return['Misc.'] = []
+    for prescription_name in list_of_prescriptions:
+        dict_to_return['Misc.'].append(prescription_name)
+
+    # st.write(len(list_of_prescriptions))
+    # st.write(list_of_prescriptions)
+    # st.write(dict_to_return)
+
+    return dict_to_return
 
 
 def translate(full_name):
@@ -104,7 +137,7 @@ def plot_single_violin_plotly(all_data, patient, patient_id, metric, oar):
                             '<b>Dose (Gy)</b>: %{x}',
                             hoverlabel = dict(font=dict(color='#a50026')),
                             name='Selected Patient',
-                            zorder=3)
+                            zorder=4)
     points_df = swarm_df(all_data[all_data['OAR']==oar][['Patient', metric]], metric)
     number_of_patients_for_this_contour = len(points_df)
     points = go.Scatter(x=points_df['x'],
@@ -131,7 +164,7 @@ def plot_single_violin_plotly(all_data, patient, patient_id, metric, oar):
                             '<b>PID</b>: %{text}<br>' +
                             '<b>Dose (Gy)</b>: %{x}',
                             name='Highlighted Patients',
-                            zorder=4)
+                            zorder=3)
     fig = go.Figure(data=[highlight,scatter,points,violin])
     
     fig.update_layout(yaxis=dict(visible=False),
@@ -254,24 +287,87 @@ def store_selected_ids(selection):
         st.rerun()
 
 
+def calculate_eud(a, dvh, ntcp=True):
+    dvh['Diff_Frac_Volume'] = dvh['Frac_Volume'].diff(-1)
+    dvh['Dose_Gy'] = dvh['Dose']/100
+
+    if ntcp:
+        a = 1/a
+
+    return(dvh['Diff_Frac_Volume']*(dvh['Dose_Gy']**a)).sum()**(1/a)
+
+
+def LKB(n: float, m: float, TD50: float, dvh: pd.DataFrame) -> float:
+
+    def func(t: float) -> float:
+        return np.exp(-(t**2)/2)
+
+    eud = calculate_eud(n,dvh)
+    t = (eud - TD50)/(m * TD50)
+    integrand = quad(func,-np.inf,t)
+    ntcp = (1/np.sqrt(2*np.pi)) * integrand[0]
+
+    return ntcp
+
+
+def get_dvh(PID, contour_name, location):
+    full_path = os.path.join(location, f'{PID}_All_DVH_Data.csv')
+    with open(full_path, 'r') as file:
+        contents = file.read()
+        file.close()
+        search_string='(\w*)\nMax,Mean,Median,Min,Volume\n(\d+\.*\d*)\scGy,(\d+\.*\d*)\scGy,(\d+\.*\d*)\scGy,(\d+\.*\d*)\scGy,(\d+\.*\d*)\nVolume,Dose\n((?:\d+\.*\d*,\d+\.*\d*\n?)*)'
+        patient_contours = re.findall(search_string, contents)
+        for contour in patient_contours:
+            if contour[0] == contour_name:
+                max_volume = float(contour[5])
+                dvh_results = re.findall('(\d+\.*\d*),(\d+\.*\d*)\n?', contour[6])
+                dvh_results = [tuple(map(float,t)) for t in dvh_results]
+                dvh_df = pd.DataFrame(data=dvh_results, columns=['Dose','Volume'])
+                dvh_df['Frac_Volume'] = dvh_df['Volume']/max_volume
+                return dvh_df
+    return 0
+
+def ntcp_results(contour_name, patient_id):
+    with st.expander(f'NTCP Models for {contour_name}'):
+        if ((contour_name == 'Parotid') or (contour_name == 'Parotid_R') or (contour_name == 'Parotid_L')):
+            dvh = get_dvh(patient_id, contour_name, '../../Mined_Data')
+            st.write(f'Xerostromia: {LKB(1, 0.4, 39.9, dvh)*100:.1f}% (DOI:10.1016/j.ijrobp.2009.07.1708)')
+            st.write(f'Xerostromia: {LKB(0.75, 0.18, 46, dvh)*100:.1f}% (DOI:10.1016/0360-3016(91)90172-z)')
+            st.write(f'Xerostromia (@1y): {LKB(1, 0.18, 43.6, dvh)*100:.1f}% (DOI:10.1016/j.oraloncology.2012.07.004)')
+            st.write(f'Xerostromia (@2y): {LKB(1, 0.3, 44.5, dvh)*100:.1f}% (DOI:10.1016/j.oraloncology.2012.07.004)')
+            st.write(f'Xerostromia (QoL SA): {LKB(1, 0.11, 44.1, dvh)*100:.1f}% (DOI:10.1016/j.oraloncology.2012.07.004)')
+
 if __name__ == '__main__':
 
     st.set_page_config(page_title='Dose Dashboard', layout='wide')
     st.title('Patient Dose Dashboard')
 
+    # ----------------------------------------------------
     # Initiate new session states
     if 'new_patient' not in st.session_state:
         st.session_state['new_patient'] = True
     if 'selected_patient_ids' not in st.session_state:
         st.session_state['selected_patient_ids'] = []
-
+    # ----------------------------------------------------
+    
+    # ----------------------------------------------------
+    # Create data caches
     directory = './'  #'../../Mined_Data'
     summary_metrics = read_database(directory)
     contour_metrics_dict, tth, tfh = get_list_of_metrics_for_contours(directory)
+    prescription_groups = get_prescription_groups(summary_metrics['Prescription'].unique())
+    # ----------------------------------------------------
+
+
 
     number_of_patients = len(summary_metrics['Patient'].unique())
-
+    ########################################################
+    #                       SIDEBAR                        #
+    ########################################################
     with st.sidebar:
+        # ---------------------------------------------------- #
+        #                       PATIENT                        #
+        # ---------------------------------------------------- #
         st.markdown(f'# Patient')
         selected_patient = st.selectbox(label=f'Please select patient to display ({number_of_patients})',
                                         options=summary_metrics['Patient'].unique(),
@@ -307,26 +403,44 @@ if __name__ == '__main__':
                                                 column_config={"Display": st.column_config.CheckboxColumn("Display?")},
                                                 hide_index=True)
         oar_list = updated_selection['OAR'][updated_selection['Display'] == True]
-        st.markdown(f'# Population')
-        if st.button('Clear Selection'):
+
+        # ---------------------------------------------------- #
+        #                    POPULATION                        #
+        # ---------------------------------------------------- #
+        st.markdown(f'# Graphs')
+        if st.button('Clear Graph Selection'):
             st.session_state.selected_patient_ids = []
+
+        # ---------------------------------------------------- #
+        #                    POPULATION                        #
+        # ---------------------------------------------------- #
+        st.markdown(f'# Population')
         with st.expander('Prescriptions'):
-            prescription_selection = pd.DataFrame({"Prescription": summary_metrics['Prescription'].unique(), "Display": [True]*len(summary_metrics['Prescription'].unique())})
-            updated_prescription_selection = st.data_editor(prescription_selection,
-                                                            column_config={"Display": st.column_config.CheckboxColumn("Display?")},
-                                                            hide_index=True)
-        prescription_list = updated_prescription_selection['Prescription'][updated_prescription_selection['Display'] == True]
+            updated_prescription_selection = pd.DataFrame(columns=['Prescription', 'Display'])
+            for group in prescription_groups:
+                c1, c2 = st.columns([4, 1])
+                with c2:
+                    default = st.toggle('select', key=group, value=True)
+                with c1:
+                    with st.expander(group):
+                        group_selection = pd.DataFrame({"Prescription": prescription_groups[group], "Display": [default]*len(prescription_groups[group])})
+                        updated_group_selection = st.data_editor(group_selection,
+                                                                column_config={"Display": st.column_config.CheckboxColumn("Display?"),
+                                                                                "Prescription": st.column_config.Column(width=200)},
+                                                                hide_index=True)
+                        updated_prescription_selection = pd.concat([updated_prescription_selection, updated_group_selection], ignore_index=True)
+            prescription_list = updated_prescription_selection['Prescription'][updated_prescription_selection['Display'] == True]
         with st.expander('WIP'):
             age_range = st.slider("Pupulation age range DUMMY", 0, 130, (0,130))
-            
-        st.markdown(f'# Models')
-        with st.expander('WIP'):
-            st.write('Some selection for which NTCP models to display')
 
+
+    # Filter for only selected contours and prescriptions
     summary_metrics = summary_metrics[summary_metrics['OAR'].isin(oar_list)]
-
     summary_metrics = summary_metrics[summary_metrics['Prescription'].isin(prescription_list)]
-    
+
+    ########################################################
+    #                        GRAPHS                        #
+    ########################################################    
     for oar in oar_list:
         try:
             contour_specific_dose_metrics = contour_metrics_dict[oar]
@@ -348,16 +462,11 @@ if __name__ == '__main__':
                 store_selected_ids(selected_patients)
             #st.plotly_chart(swarm(summary_metrics[summary_metrics['OAR']==oar][selected_metric], 'test'))
             #st.pyplot(plot_single_violin(summary_metrics, specific_patient_df, selected_metric, oar))
-
-
-        # with column2:
-        #     with st.expander('NTCP Models'):
-        #         st.write('Some more')
-        #         st.write('Some more')
-        #         st.write('Some more')
-        #         st.write('Some more')
-        #         st.write('Some more')
-        #         st.write('Some more')
+        with column2:
+            if st.toggle('Show NTCP', key=f'{oar}_ntcp'):
+                ntcp_results(oar, selected_patient)
+                
+                    
 
 #st.pyplot(sns.pairplot(summary_metrics.drop('Patient', axis=1), hue='OAR', palette='gnuplot'))
 #st.plotly_chart(px.parallel_categories(summary_metrics))
