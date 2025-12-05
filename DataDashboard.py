@@ -128,9 +128,15 @@ def plot_single_violin_plotly(all_data, patient, patient_id, metric, oar):
                         name='violin',
                         hoverinfo='none',
                         zorder=2)
+
+
     scatter = go.Scatter(x=patient[patient['OAR']==oar][metric],
                             y=['violin'],
-                            marker=dict(color='#a50026'),
+                            marker=dict(color='#F7BFBF',
+                                        size=8,
+                                        gradient=dict(
+                                            color=["#EA1515"],
+                                            type="radial")),
                             text=patient_id,
                             hovertemplate=
                             '<b>PID</b>: '+ str(patient_id) + '<br>' +
@@ -156,7 +162,7 @@ def plot_single_violin_plotly(all_data, patient, patient_id, metric, oar):
     highlight_df = highlight_df[highlight_df['patient'].isin(st.session_state.selected_patient_ids)]
     highlight = go.Scatter(x=highlight_df['x'],
                             y=highlight_df['y'],
-                            marker=dict(color='#f46d43', symbol='circle'),
+                            marker=dict(color='#fdae6b', symbol='circle'),
                             mode='markers',
                             yaxis='y2',
                             text=highlight_df['patient'],
@@ -331,11 +337,15 @@ def ntcp_results(contour_name, patient_id):
     with st.expander(f'NTCP Models for {contour_name}'):
         if ((contour_name == 'Parotid') or (contour_name == 'Parotid_R') or (contour_name == 'Parotid_L')):
             dvh = get_dvh(patient_id, contour_name, '../../Mined_Data')
-            st.write(f'Xerostromia: {LKB(1, 0.4, 39.9, dvh)*100:.1f}% (DOI:10.1016/j.ijrobp.2009.07.1708)')
-            st.write(f'Xerostromia: {LKB(0.75, 0.18, 46, dvh)*100:.1f}% (DOI:10.1016/0360-3016(91)90172-z)')
-            st.write(f'Xerostromia (@1y): {LKB(1, 0.18, 43.6, dvh)*100:.1f}% (DOI:10.1016/j.oraloncology.2012.07.004)')
-            st.write(f'Xerostromia (@2y): {LKB(1, 0.3, 44.5, dvh)*100:.1f}% (DOI:10.1016/j.oraloncology.2012.07.004)')
-            st.write(f'Xerostromia (QoL SA): {LKB(1, 0.11, 44.1, dvh)*100:.1f}% (DOI:10.1016/j.oraloncology.2012.07.004)')
+            arr = [['Xerostromia', f'{LKB(1, 0.4, 39.9, dvh)*100:.1f}%', 'LKB', '(DOI:10.1016/j.ijrobp.2009.07.1708)'],
+            ['Xerostromia', f'{LKB(0.75, 0.18, 46, dvh)*100:.1f}%', 'LKB', '(DOI:10.1016/0360-3016(91)90172-z)'],
+            ['Xerostromia (@1y)', f'{LKB(1, 0.18, 43.6, dvh)*100:.1f}%', 'LKB', '(DOI:10.1016/j.oraloncology.2012.07.004)'],
+            ['Xerostromia (@2y)', f'{LKB(1, 0.3, 44.5, dvh)*100:.1f}%', 'LKB', '(DOI:10.1016/j.oraloncology.2012.07.004)'],
+            ['Xerostromia (QoL SA)', f'{LKB(1, 0.11, 44.1, dvh)*100:.1f}%', 'LKB', '(DOI:10.1016/j.oraloncology.2012.07.004)']]
+            df = pd.DataFrame(data=arr, columns=['Side Effect','P(Side Effect)','Model','Publication'])
+            df = df.style.map(lambda x: f"background-color: {'#e6f5d0' if float(x.rstrip('%'))<=5 else '#ca6b74'}", subset='P(Side Effect)')
+            st.dataframe(df, hide_index=True)
+
 
 if __name__ == '__main__':
 
@@ -467,9 +477,12 @@ if __name__ == '__main__':
                 ntcp_results(oar, selected_patient)
                 
                     
+# all_patient_list = summary_metrics['Patient'].unique()
+# oar_list = 
+
 
 #st.pyplot(sns.pairplot(summary_metrics.drop('Patient', axis=1), hue='OAR', palette='gnuplot'))
-#st.plotly_chart(px.parallel_categories(summary_metrics))
+#st.plotly_chart(px.parallel_coordinates(summary_metrics, dimentions=['']))
 
 #https://stackoverflow.com/questions/8230638/parallel-coordinates-plot-in-matplotlib
 
