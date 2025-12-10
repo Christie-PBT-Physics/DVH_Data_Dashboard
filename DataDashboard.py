@@ -7,9 +7,11 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 from scipy.integrate import quad
+import scipy.special as special
 import os
 import re
 import collections
+import math
 
 
 @st.cache_data
@@ -63,6 +65,10 @@ def get_prescription_groups(list_of_prescriptions):
     # st.write(dict_to_return)
 
     return dict_to_return
+
+
+sqrtpi = math.sqrt(math.pi)
+sqrt2 = math.sqrt(2)
 
 
 def translate(full_name):
@@ -303,6 +309,14 @@ def calculate_eud(a, dvh, ntcp=True):
     return(dvh['Diff_Frac_Volume']*(dvh['Dose_Gy']**a)).sum()**(1/a)
 
 
+def calculate_eqd2(a_b, BED):
+    return BED / (1 + (2/a_b))
+
+
+def calculate_bed(a_b, d, n):
+    return (n*d)*(1 + (d/a_b))
+
+
 def LKB(n: float, m: float, TD50: float, dvh: pd.DataFrame) -> float:
 
     def func(t: float) -> float:
@@ -312,6 +326,44 @@ def LKB(n: float, m: float, TD50: float, dvh: pd.DataFrame) -> float:
     t = (eud - TD50)/(m * TD50)
     integrand = quad(func,-np.inf,t)
     ntcp = (1/np.sqrt(2*np.pi)) * integrand[0]
+
+    return ntcp
+
+
+def Logistic(dose, d_50, g_50):
+
+    numerator = math.exp(4*g_50*((dose/d_50) - 1))
+    denominator = 1 + math.exp(4*g_50*((dose/d_50) - 1))
+    ntcp = numerator/denominator
+
+    return ntcp
+
+
+def LogLogistic(dose, d_50, g_50):
+
+    ntcp = 1/(1 + pow(d_50/dose,4*g_50))
+
+    return ntcp
+
+
+def Lyman(dose, g_50, d_50):
+
+    ntcp = 0.5 * (1 - special.erf(g_50 * sqrtpi * (1- (dose/d_50))))
+
+    return ntcp
+
+
+def Probit(dose, d_50, m):
+    t = (dose - d_50)/(m*d_50)
+    ntcp = 0.5 + 0.5* special.erf(t/sqrt2)
+
+    return ntcp
+
+
+def PoissonBased(dose, d_50, g_50):
+
+    exponent = -exp(math.e*g_50*(1-(dose/d_50)))
+    ntcp = pow(2,exponent)
 
     return ntcp
 
@@ -333,17 +385,30 @@ def get_dvh(PID, contour_name, location):
                 return dvh_df
     return 0
 
-def ntcp_results(contour_name, patient_id):
+
+def ntcp_results(contour_name, patient_id, patient_df):
     with st.expander(f'NTCP Models for {contour_name}'):
-        if ((contour_name == 'Parotid') or (contour_name == 'Parotid_R') or (contour_name == 'Parotid_L')):
+        parotid_contour_list = ('Parotid', 'Parotid_R', 'Parotid_L')
+        if contour_name in parotid_contour_list:
             dvh = get_dvh(patient_id, contour_name, '../../Mined_Data')
-            arr = [['Xerostromia', f'{LKB(1, 0.4, 39.9, dvh)*100:.1f}%', 'LKB', '(DOI:10.1016/j.ijrobp.2009.07.1708)'],
-            ['Xerostromia', f'{LKB(0.75, 0.18, 46, dvh)*100:.1f}%', 'LKB', '(DOI:10.1016/0360-3016(91)90172-z)'],
-            ['Xerostromia (@1y)', f'{LKB(1, 0.18, 43.6, dvh)*100:.1f}%', 'LKB', '(DOI:10.1016/j.oraloncology.2012.07.004)'],
-            ['Xerostromia (@2y)', f'{LKB(1, 0.3, 44.5, dvh)*100:.1f}%', 'LKB', '(DOI:10.1016/j.oraloncology.2012.07.004)'],
-            ['Xerostromia (QoL SA)', f'{LKB(1, 0.11, 44.1, dvh)*100:.1f}%', 'LKB', '(DOI:10.1016/j.oraloncology.2012.07.004)']]
-            df = pd.DataFrame(data=arr, columns=['Side Effect','P(Side Effect)','Model','Publication'])
-            df = df.style.map(lambda x: f"background-color: {'#e6f5d0' if float(x.rstrip('%'))<=5 else '#ca6b74'}", subset='P(Side Effect)')
+            mean_dose = float(patient_df[patient_df['OAR']==contour_name]['Mean'])/100
+            print(mean_dose)
+            arr = [
+                    ['Xerostomia','1 Year','Parotid Salivary Flow', f'{LKB(1, 0.4, 39.9, dvh)*100:.1f}', 'LKB', 'Conv-RT, IMRT', '2010', 'DOI:10.1016/j.ijrobp.2009.07.1708'],
+                    ['Xerostomia','','', f'{LKB(0.75, 0.18, 46, dvh)*100:.1f}', 'LKB', 'Photons', '1991', 'DOI:10.1016/0360-3016(91)90172-z'],
+                    ['Xerostomia','1 Year', 'Scintigraphy', f'{LKB(1, 0.18, 43.6, dvh)*100:.1f}', 'LKB', 'IMRT', '2013', 'DOI:10.1016/j.oraloncology.2012.07.004'],
+                    ['Xerostomia','2 Years', 'Scintigraphy', f'{LKB(1, 0.3, 44.5, dvh)*100:.1f}', 'LKB', 'IMRT', '2013', 'DOI:10.1016/j.oraloncology.2012.07.004'],
+                    ['Xerostomia','1 Year', 'EORTC Questionnaire QoL', f'{LKB(1, 0.11, 44.1, dvh)*100:.1f}', 'LKB', 'IMRT', '2013', 'DOI:10.1186/1471-2407-12-567'],
+                    ['Xerostomia','3 Monts', 'Grade =4, Scintigraphy', f'{Logistic(mean_dose, 22.2,0.83)*100:.1f}', 'Logistic', 'Photons', '2012', 'DOI:10.1016/j.ijrobp.2011.04.020'],
+                    ['Xerostomia','1 Year', 'Grade =4, Scintigraphy', f'{Logistic(mean_dose, 32.4,0.97)*100:.1f}', 'Logistic', 'Photons', '2012', 'DOI:10.1016/j.ijrobp.2011.04.020'],
+                    ['Xerostomia','1 Year', '-25% Salivary Flow', f'{LKB(1.13,0.42,39.4,dvh)*100:.1f}', 'LKB', 'Photons', '2010', 'DOI:10.1016/j.ijrobp.2009.07.1685'],
+                    ['Xerostomia','1 Year', '-25% Salivary Flow', f'{LKB(1,0.42,39.4,dvh)*100:.1f}', 'LKB(n=1)', 'Photons', '2010', 'DOI:10.1016/j.ijrobp.2009.07.1685'],
+                ]
+            df = pd.DataFrame(data=arr, columns=['Side Effect','Follow Up','Details','P(Side Effect)','Model','Modality','Year','Publication'])
+            #cmap = plt.get_cmap('cividis')
+            cmap = plt.get_cmap('Blues')
+            df = df.style.background_gradient(cmap=cmap, subset='P(Side Effect)')
+            #df = df.style.map(lambda x: f"background-color: {'#e6f5d0' if float(x.rstrip('%'))<=5 else '#ca6b74'}", subset='P(Side Effect)')
             st.dataframe(df, hide_index=True)
 
 
@@ -362,7 +427,7 @@ if __name__ == '__main__':
     
     # ----------------------------------------------------
     # Create data caches
-    directory = './'  #'../../Mined_Data'
+    directory = '../DVH_Data'  #'../../Mined_Data'
     summary_metrics = read_database(directory)
     contour_metrics_dict, tth, tfh = get_list_of_metrics_for_contours(directory)
     prescription_groups = get_prescription_groups(summary_metrics['Prescription'].unique())
@@ -459,6 +524,9 @@ if __name__ == '__main__':
         dose_metrics = ['Mean' ,'Median', 'Max', 'Min'] + contour_specific_dose_metrics
         dose_metrics_to_display = [tth[x] for x in dose_metrics]
         column1, column2 = st.columns([1,1])
+        # ---------------------------------------------------- #
+        #                      Graphs                          #
+        # ---------------------------------------------------- #
         with column1:
             column1_1, column1_2 = st.columns([2,1])
             with column1_2:
@@ -472,21 +540,48 @@ if __name__ == '__main__':
                 store_selected_ids(selected_patients)
             #st.plotly_chart(swarm(summary_metrics[summary_metrics['OAR']==oar][selected_metric], 'test'))
             #st.pyplot(plot_single_violin(summary_metrics, specific_patient_df, selected_metric, oar))
+        # ---------------------------------------------------- #
+        #                   NTCP Models                        #
+        # ---------------------------------------------------- #
         with column2:
             if st.toggle('Show NTCP', key=f'{oar}_ntcp'):
-                ntcp_results(oar, selected_patient)
-                
-                    
-# all_patient_list = summary_metrics['Patient'].unique()
-# oar_list = 
+                ntcp_results(oar, selected_patient, specific_patient_df)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# new_summary_metrics = read_database(directory)
+# all_patient_list = new_summary_metrics['Patient'].unique()
+# all_oar_list = new_summary_metrics['OAR'].unique()
+# dict_keys = all_oar_list.tolist()
+# dict_keys.insert(0,'PID')
+# parallel_dict = {k: [] for k in dict_keys}
+
+# for pid in all_patient_list:
+#     parallel_dict['PID'].append(pid)
+#     for oar in all_oar_list:
+#         parallel_dict[oar] = new_summary_metrics['Mean'][(new_summary_metrics['Patient']==pid) & (new_summary_metrics['OAR']==oar)]
+
+# parallel_df = pd.DataFrame(parallel_dict)
+# st.write(parallel_df)
+#st.plotly_chart(px.parallel_coordinates(parallel_df, dimentions=['CTV_High','PTV_High']))
 
 
 #st.pyplot(sns.pairplot(summary_metrics.drop('Patient', axis=1), hue='OAR', palette='gnuplot'))
-#st.plotly_chart(px.parallel_coordinates(summary_metrics, dimentions=['']))
+
 
 #https://stackoverflow.com/questions/8230638/parallel-coordinates-plot-in-matplotlib
-
-
 #https://plotly.com/python/parallel-categories-diagram/ (Parallel Categories Linked Brushing)
 #https://masamasace.github.io/plotly_color/
 
